@@ -5,6 +5,7 @@ import io
 import os
 
 app = Flask(__name__)
+app.config["MAX_CONTENT_LENGTH"] = 20 * 1024 * 1024
 model = YOLO("best.pt")
 
 # CHANGE THESE TO MATCH YOUR MODEL'S CLASS NAMES EXACTLY
