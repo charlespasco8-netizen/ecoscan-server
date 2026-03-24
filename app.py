@@ -7,7 +7,7 @@ import os
 
 app = Flask(_name_)
 
-#Allow larger uploads
+# Allow larger uploads
 app.config["MAX_CONTENT_LENGTH"] = 20 * 1024 * 1024  # 20 MB
 
 #Load model once when server starts
