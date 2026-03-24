@@ -1,6 +1,4 @@
 flask
-werkzeug
 gunicorn
 pillow
 ultralytics
-numpy
