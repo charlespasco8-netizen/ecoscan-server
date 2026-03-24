@@ -3,18 +3,17 @@ from werkzeug.exceptions import RequestEntityTooLarge
 from PIL import Image
 from ultralytics import YOLO
 import numpy as np
-import io
 import os
 
-app = Flask(__name__)
+app = Flask(_name_)
 
-# Allow larger uploads
-app.config["MAX_CONTENT_LENGTH"] = 16 * 1024 * 1024 
+#Allow larger uploads
+app.config["MAX_CONTENT_LENGTH"] = 20 * 1024 * 1024  # 20 MB
 
-# Load model once
+#Load model once when server starts
 model = YOLO("best.pt")
 
-# CHANGE THESE TO MATCH YOUR MODEL'S CLASS NAMES EXACTLY
+#CHANGE THESE TO MATCH YOUR MODEL'S CLASS NAMES EXACTLY
 recyclable = ["bottle", "plastic bottle", "can", "paper", "cardboard"]
 organic = ["banana peel", "food waste", "leaf", "fruit peel"]
 hazardous = ["battery", "bulb", "chemical", "spray can", "laptop"]
@@ -44,7 +43,7 @@ def detect():
         print("Files keys:", list(request.files.keys()))
         print("Form keys:", list(request.form.keys()))
 
-        # Get uploaded file from MIT App Inventor Web.PostFile
+        # MIT App Inventor Web.PostFile usually sends file in request.files
         if not request.files:
             return jsonify({
                 "success": False,
@@ -63,24 +62,28 @@ def detect():
         img = Image.open(uploaded_file.stream).convert("RGB")
         print("Original image size:", img.size)
 
-        # RESIZE IMAGE HERE TO REDUCE MEMORY USAGE
+        # Resize image inside Python to reduce memory usage
         img.thumbnail((320, 320))
         print("Resized image size:", img.size)
-
-        # Optional debug save
-        img.save("debug_resized.jpg", format="JPEG", quality=85)
-        print("Saved debug_resized.jpg:", os.path.getsize("debug_resized.jpg"), "bytes")
 
         # Convert PIL image to numpy array for YOLO
         img_np = np.array(img)
 
-        # Run YOLO on resized image
+        # Run YOLO prediction
         results = model.predict(
             source=img_np,
             imgsz=320,
             conf=0.25,
             verbose=False
         )
+
+        if not results or len(results) == 0:
+            return jsonify({
+                "success": True,
+                "detected": False,
+                "message": "No object detected",
+                "category": "Unknown"
+            }), 200
 
         result = results[0]
 
@@ -92,19 +95,21 @@ def detect():
                 "category": "Unknown"
             }), 200
 
+        # Get first detection
         box = result.boxes[0]
         class_id = int(box.cls[0].item())
         confidence = float(box.conf[0].item())
         class_name = str(result.names[class_id]).strip()
+        class_name_clean = class_name.lower()
 
         # CATEGORY MAPPING
-        if class_name in recyclable:
+        if class_name_clean in [x.lower() for x in recyclable]:
             category = "Recyclable"
-        elif class_name in organic:
+        elif class_name_clean in [x.lower() for x in organic]:
             category = "Organic"
-        elif class_name in hazardous:
+        elif class_name_clean in [x.lower() for x in hazardous]:
             category = "Hazardous"
-        elif class_name in non_recyclable:
+        elif class_name_clean in [x.lower() for x in non_recyclable]:
             category = "Non-Recyclable"
         else:
             category = "Unknown"
@@ -125,7 +130,7 @@ def detect():
         }), 500
 
 
-if __name__ == "__main__":
-    print("Starting debug server...")
-    port = int(os.environ.get("PORT", 5000))
+if _name_ == "_main_":
+    print("Starting server...")
+    port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port, debug=True)
