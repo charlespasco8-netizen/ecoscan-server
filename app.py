@@ -1,37 +1,22 @@
 from flask import Flask, request, jsonify
-from werkzeug.exceptions import RequestEntityTooLarge
 from PIL import Image
 from ultralytics import YOLO
-import numpy as np
+import io
 import os
 
-app = Flask(_name_)
-
-# Allow larger uploads
-app.config["MAX_CONTENT_LENGTH"] = 20 * 1024 * 1024  # 20 MB
-
-#Load model once when server starts
+app = Flask(__name__)
+app.config["MAX_CONTENT_LENGTH"] = 20 * 1024 * 1024
 model = YOLO("best.pt")
 
-#CHANGE THESE TO MATCH YOUR MODEL'S CLASS NAMES EXACTLY
+# CHANGE THESE TO MATCH YOUR MODEL'S CLASS NAMES EXACTLY
 recyclable = ["bottle", "plastic bottle", "can", "paper", "cardboard"]
 organic = ["banana peel", "food waste", "leaf", "fruit peel"]
 hazardous = ["battery", "bulb", "chemical", "spray can", "laptop"]
 non_recyclable = ["wrapper", "styrofoam", "diaper", "sachet"]
 
-
 @app.route("/", methods=["GET"])
 def home():
     return "Server running"
-
-
-@app.errorhandler(RequestEntityTooLarge)
-def handle_large_file(e):
-    return jsonify({
-        "success": False,
-        "error": "Image too large"
-    }), 413
-
 
 @app.route("/detect", methods=["POST"])
 def detect():
@@ -40,76 +25,61 @@ def detect():
         print("Method:", request.method)
         print("Content-Type:", request.content_type)
         print("Content-Length:", request.content_length)
+
+        raw = request.get_data(cache=True, parse_form_data=False)
+        print("Raw data length:", len(raw) if raw else 0)
+
         print("Files keys:", list(request.files.keys()))
         print("Form keys:", list(request.form.keys()))
 
-        # MIT App Inventor Web.PostFile usually sends file in request.files
-        if not request.files:
+        image_bytes = None
+
+        if raw and len(raw) > 0:
+            image_bytes = raw
+            print("Using raw body:", len(image_bytes))
+
+        elif request.files:
+            uploaded_file = list(request.files.values())[0]
+            image_bytes = uploaded_file.read()
+            print("Using request.files:", len(image_bytes))
+
+        if not image_bytes:
+            print("No image bytes received.")
             return jsonify({
                 "success": False,
-                "error": "No uploaded file received"
+                "error": "No image received"
             }), 400
 
-        uploaded_file = list(request.files.values())[0]
+        with open("debug_upload.jpg", "wb") as f:
+            f.write(image_bytes)
 
-        if uploaded_file.filename == "":
-            return jsonify({
-                "success": False,
-                "error": "Empty uploaded file"
-            }), 400
+        print("Saved debug_upload.jpg:", os.path.getsize("debug_upload.jpg"), "bytes")
 
-        # Open image directly from uploaded stream
-        img = Image.open(uploaded_file.stream).convert("RGB")
-        print("Original image size:", img.size)
+        img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
 
-        # Resize image inside Python to reduce memory usage
-        img.thumbnail((320, 320))
-        print("Resized image size:", img.size)
-
-        # Convert PIL image to numpy array for YOLO
-        img_np = np.array(img)
-
-        # Run YOLO prediction
-        results = model.predict(
-            source=img_np,
-            imgsz=320,
-            conf=0.25,
-            verbose=False
-        )
-
-        if not results or len(results) == 0:
-            return jsonify({
-                "success": True,
-                "detected": False,
-                "message": "No object detected",
-                "category": "Unknown"
-            }), 200
-
+        results = model(img)
         result = results[0]
 
         if result.boxes is None or len(result.boxes) == 0:
             return jsonify({
                 "success": True,
                 "detected": False,
-                "message": "No object detected",
-                "category": "Unknown"
-            }), 200
+                "message": "No object detected"
+            })
 
-        # Get first detection
         box = result.boxes[0]
         class_id = int(box.cls[0].item())
         confidence = float(box.conf[0].item())
         class_name = str(result.names[class_id]).strip()
-        class_name_clean = class_name.lower()
 
         # CATEGORY MAPPING
-        if class_name_clean in [x.lower() for x in recyclable]:
+        if class_name in recyclable:
             category = "Recyclable"
-        elif class_name_clean in [x.lower() for x in organic]:
+        elif class_name in organic:
             category = "Organic"
-        elif class_name_clean in [x.lower() for x in hazardous]:
+        elif class_name in hazardous:
             category = "Hazardous"
-        elif class_name_clean in [x.lower() for x in non_recyclable]:
+        elif class_name in non_recyclable:
             category = "Non-Recyclable"
         else:
             category = "Unknown"
@@ -120,7 +90,7 @@ def detect():
             "object": class_name,
             "category": category,
             "confidence": round(confidence, 4)
-        }), 200
+        })
 
     except Exception as e:
         print("ERROR:", str(e))
@@ -129,8 +99,6 @@ def detect():
             "error": str(e)
         }), 500
 
-
-if _name_ == "_main_":
-    print("Starting server...")
-    port = int(os.environ.get("PORT", 10000))
-    app.run(host="0.0.0.0", port=port, debug=True)
+if __name__ == "__main__":
+    print("Starting debug server...")
+    app.run(host="0.0.0.0", port=5000, debug=True)
