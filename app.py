@@ -1,14 +1,13 @@
 from flask import Flask, request, jsonify
-from PIL import Image
 from ultralytics import YOLO
-import io
+from PIL import Image
+import requests
+from io import BytesIO
 import os
 
 app = Flask(__name__)
-app.config["MAX_CONTENT_LENGTH"] = 20 * 1024 * 1024
 model = YOLO("best.pt")
 
-# CHANGE THESE TO MATCH YOUR MODEL'S CLASS NAMES EXACTLY
 recyclable = ["bottle", "plastic bottle", "can", "paper", "cardboard"]
 organic = ["banana peel", "food waste", "leaf", "fruit peel"]
 hazardous = ["battery", "bulb", "chemical", "spray can", "laptop"]
@@ -18,87 +17,81 @@ non_recyclable = ["wrapper", "styrofoam", "diaper", "sachet"]
 def home():
     return "Server running"
 
-@app.route("/detect", methods=["POST"])
-def detect():
+@app.route("/detect-url", methods=["POST"])
+def detect_url():
+    data = request.get_json(silent=True) or {}
+    image_url = data.get("image_url")
+
+    if not image_url:
+        return jsonify({
+            "success": False,
+            "error": "No image_url provided"
+        }), 400
+
     try:
-        print("\n---- REQUEST RECEIVED ----")
-        print("Method:", request.method)
-        print("Content-Type:", request.content_type)
-        print("Content-Length:", request.content_length)
+        resp = requests.get(image_url, timeout=20)
+        resp.raise_for_status()
 
-        raw = request.get_data(cache=True, parse_form_data=False)
-        print("Raw data length:", len(raw) if raw else 0)
-
-        print("Files keys:", list(request.files.keys()))
-        print("Form keys:", list(request.form.keys()))
-
-        image_bytes = None
-
-        if raw and len(raw) > 0:
-            image_bytes = raw
-            print("Using raw body:", len(image_bytes))
-
-        elif request.files:
-            uploaded_file = list(request.files.values())[0]
-            image_bytes = uploaded_file.read()
-            print("Using request.files:", len(image_bytes))
-
-        if not image_bytes:
-            print("No image bytes received.")
-            return jsonify({
-                "success": False,
-                "error": "No image received"
-            }), 400
-
-        with open("debug_upload.jpg", "wb") as f:
-            f.write(image_bytes)
-
-        print("Saved debug_upload.jpg:", os.path.getsize("debug_upload.jpg"), "bytes")
-
-        img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+        img = Image.open(BytesIO(resp.content)).convert("RGB")
 
         results = model(img)
         result = results[0]
+        names = result.names
 
-        if result.boxes is None or len(result.boxes) == 0:
+        detections = []
+
+        for box in result.boxes:
+            cls_id = int(box.cls[0])
+            conf = float(box.conf[0])
+            label = names[cls_id]
+
+            low = label.lower()
+            if low in recyclable:
+                waste_type = "Recyclable"
+                points = 10
+            elif low in organic:
+                waste_type = "Organic"
+                points = 8
+            elif low in hazardous:
+                waste_type = "Hazardous"
+                points = 15
+            else:
+                waste_type = "Non-Recyclable"
+                points = 5
+
+            detections.append({
+                "label": label,
+                "confidence": round(conf, 4),
+                "waste_type": waste_type,
+                "points": points
+            })
+
+        if len(detections) == 0:
             return jsonify({
                 "success": True,
                 "detected": False,
-                "message": "No object detected"
-            })
+                "message": "No object detected",
+                "detections": []
+            }), 200
 
-        box = result.boxes[0]
-        class_id = int(box.cls[0].item())
-        confidence = float(box.conf[0].item())
-        class_name = str(result.names[class_id]).strip()
-
-        # CATEGORY MAPPING
-        if class_name in recyclable:
-            category = "Recyclable"
-        elif class_name in organic:
-            category = "Organic"
-        elif class_name in hazardous:
-            category = "Hazardous"
-        elif class_name in non_recyclable:
-            category = "Non-Recyclable"
-        else:
-            category = "Unknown"
+        best = max(detections, key=lambda x: x["confidence"])
 
         return jsonify({
             "success": True,
             "detected": True,
-            "object": class_name,
-            "category": category,
-            "confidence": round(confidence, 4)
-        })
+            "label": best["label"],
+            "confidence": best["confidence"],
+            "waste_type": best["waste_type"],
+            "points": best["points"],
+            "detections": detections
+        }), 200
 
     except Exception as e:
-        print("ERROR:", str(e))
         return jsonify({
             "success": False,
             "error": str(e)
         }), 500
 
 if __name__ == "__main__":
-    print("Starting debug server...")
-    app.run(host="0.0.0.0", port=5000, debug=True)
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
