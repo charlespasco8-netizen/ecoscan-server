@@ -3,3 +3,4 @@ ultralytics
 pillow
 requests
 gunicorn
+werkzeug
