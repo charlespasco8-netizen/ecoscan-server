@@ -12,6 +12,7 @@ app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 16 * 1024 * 1024  # 16 MB
 
 model = YOLO("best.pt")
+print("MODEL NAMES:", model.names)
 
 recyclable = ["bottle", "plastic bottle", "can", "paper", "cardboard"]
 organic = ["banana peel", "food waste", "leaf", "fruit peel"]
@@ -37,34 +38,32 @@ def classify_detection(label: str) -> tuple[str, int]:
 def run_detection_on_image(img: Image.Image):
     results = model(img)
     result = results[0]
-    names = result.names
 
     detections = []
 
-    if result.boxes is not None:
-        for box in result.boxes:
-            cls_id = int(box.cls[0])
-            conf = float(box.conf[0])
-            label = names[cls_id]
+    if result.probs is not None:
+        cls_id = int(result.probs.top1)
+        conf = float(result.probs.top1conf)
+        label = result.names[cls_id]
 
-            waste_type, points = classify_detection(label)
+        waste_type, points = classify_detection(label)
 
-            detections.append({
-                "label": label,
-                "confidence": round(conf, 4),
-                "waste_type": waste_type,
-                "points": points
-            })
+        detections.append({
+            "label": label,
+            "confidence": round(conf, 4),
+            "waste_type": waste_type,
+            "points": points
+        })
 
     if len(detections) == 0:
         return {
             "success": True,
             "detected": False,
-            "message": "No object detected",
+            "message": "No waste detected",
             "detections": []
         }, 200
 
-    best = max(detections, key=lambda x: x["confidence"])
+    best = detections[0]
 
     return {
         "success": True,
@@ -94,7 +93,6 @@ def handle_large_file(e):
 @app.route("/detect", methods=["POST"])
 def detect_file():
     try:
-        # Web1.PostFile usually sends raw body, not multipart/form-data
         raw_data = request.get_data()
 
         if not raw_data:
@@ -120,7 +118,7 @@ def detect_file():
         }), 500
 
 
-# FOR URL-BASED FLOW (Cloudinary or image link)
+# FOR URL-BASED FLOW
 @app.route("/detect-url", methods=["POST"])
 def detect_url():
     data = request.get_json(silent=True) or {}
