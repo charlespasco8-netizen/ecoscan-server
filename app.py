@@ -11,28 +11,85 @@ app = Flask(__name__)
 # Allow larger uploads, but still keep a limit
 app.config["MAX_CONTENT_LENGTH"] = 16 * 1024 * 1024  # 16 MB
 
+# Load YOLO classification model
 model = YOLO("best.pt")
 print("MODEL NAMES:", model.names)
 
-recyclable = ["bottle", "plastic bottle", "can", "paper", "cardboard"]
-organic = ["banana peel", "food waste", "leaf", "fruit peel"]
-hazardous = ["battery", "bulb", "chemical", "spray can", "laptop"]
-non_recyclable = ["wrapper", "styrofoam", "diaper", "sachet"]
+# Object classes mapped to waste categories
+recyclable = [
+    "bottle",
+    "plastic bottle",
+    "plastic_bottle",
+    "can",
+    "paper",
+    "paper cup",
+    "paper_cup",
+    "cardboard",
+    "glass jars",
+    "glass_jars"
+]
+
+organic = [
+    "banana peel",
+    "banana_peel",
+    "food waste",
+    "food_waste",
+    "leaf",
+    "fruit peel",
+    "fruit_peel",
+    "egg shell",
+    "egg_shell",
+    "coffee grounds",
+    "ground coffee",
+    "ground_coffee"
+]
+
+hazardous = [
+    "battery",
+    "bulb",
+    "chemical",
+    "spray can",
+    "spray_can",
+    "laptop",
+    "e waste",
+    "e_waste",
+    "ewaste"
+]
+
+non_recyclable = [
+    "wrapper",
+    "snack wrapper",
+    "snack_wrapper",
+    "styrofoam",
+    "diaper",
+    "sachet",
+    "disposable cutlery",
+    "disposable_cutlery"
+]
 
 
-def classify_detection(label: str) -> tuple[str, int]:
-    low = label.lower()
+def normalize_label(label: str) -> str:
+    return label.lower().replace("_", " ").replace("-", " ").strip()
 
-    if low in recyclable:
-        return "Recyclable", 10
-    elif low in organic:
-        return "Organic", 8
-    elif low in hazardous:
-        return "Hazardous", 15
-    elif low in non_recyclable:
-        return "Non-Recyclable", 5
+
+def classify_detection(label: str) -> tuple[str, float]:
+    low = normalize_label(label)
+
+    recyclable_norm = [normalize_label(x) for x in recyclable]
+    organic_norm = [normalize_label(x) for x in organic]
+    hazardous_norm = [normalize_label(x) for x in hazardous]
+    non_recyclable_norm = [normalize_label(x) for x in non_recyclable]
+
+    if low in recyclable_norm:
+        return "Recyclable", 0.5
+    elif low in organic_norm:
+        return "Organic", 0.5
+    elif low in hazardous_norm:
+        return "Hazardous", 0.5
+    elif low in non_recyclable_norm:
+        return "Non-Recyclable", 0.5
     else:
-        return "Non-Recyclable", 5
+        return "Unknown", 0.0
 
 
 def run_detection_on_image(img: Image.Image):
@@ -45,11 +102,13 @@ def run_detection_on_image(img: Image.Image):
         cls_id = int(result.probs.top1)
         conf = float(result.probs.top1conf)
         label = result.names[cls_id]
+        normalized_label = normalize_label(label)
 
         waste_type, points = classify_detection(label)
 
         detections.append({
             "label": label,
+            "normalized_label": normalized_label,
             "confidence": round(conf, 4),
             "waste_type": waste_type,
             "points": points
@@ -69,6 +128,7 @@ def run_detection_on_image(img: Image.Image):
         "success": True,
         "detected": True,
         "label": best["label"],
+        "normalized_label": best["normalized_label"],
         "confidence": best["confidence"],
         "waste_type": best["waste_type"],
         "points": best["points"],
